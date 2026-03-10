@@ -15,19 +15,19 @@
 ### 方式一：在线安装（推荐）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/你的用户名/frp-panel-azure/main/quick-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rokesai/frp-panel-azure/main/quick-install.sh | bash
 ```
 
 或使用 wget：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/你的用户名/frp-panel-azure/main/quick-install.sh | bash
+wget -qO- https://raw.githubusercontent.com/rokesai/frp-panel-azure/main/quick-install.sh | bash
 ```
 
 ### 方式二：克隆安装
 
 ```bash
-git clone https://github.com/你的用户名/frp-panel-azure.git
+git clone https://github.com/rokesai/frp-panel-azure.git
 cd frp-panel-azure
 chmod +x install-frp-panel.sh
 ./install-frp-panel.sh
