@@ -55,31 +55,11 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# 安装依赖
-install_dependencies() {
-    print_info "检查并安装依赖..."
-    
-    if [[ "$OS" == "linux" ]]; then
-        if command_exists apt-get; then
-            sudo apt-get update
-            sudo apt-get install -y curl wget git
-        elif command_exists yum; then
-            sudo yum install -y curl wget git
-        fi
-    elif [[ "$OS" == "darwin" ]]; then
-        if ! command_exists brew; then
-            print_error "请先安装 Homebrew: https://brew.sh"
-            exit 1
-        fi
-        brew install curl wget git
-    fi
-}
-
 # 选择部署方式
 echo ""
 print_info "请选择部署方式:"
 echo "  1) Docker 部署 (推荐)"
-echo "  2) 二进制部署 (直接运行)"
+echo "  2) 源码编译部署"
 read -p "请输入选项 [1-2]: " DEPLOY_METHOD
 
 if [[ "$DEPLOY_METHOD" == "1" ]]; then
@@ -91,8 +71,8 @@ if [[ "$DEPLOY_METHOD" == "1" ]]; then
         print_error "未检测到 Docker"
         print_info "正在安装 Docker..."
         curl -fsSL https://get.docker.com | sh
-        sudo systemctl start docker
-        sudo systemctl enable docker
+        systemctl start docker
+        systemctl enable docker
     fi
     
     print_info "下载项目..."
@@ -109,29 +89,44 @@ if [[ "$DEPLOY_METHOD" == "1" ]]; then
     WEB_PORT=${WEB_PORT:-9000}
     
     # 创建安装目录
-    sudo mkdir -p "$INSTALL_DIR"
-    sudo cp -r . "$INSTALL_DIR/"
+    mkdir -p "$INSTALL_DIR"
+    cp -r . "$INSTALL_DIR/"
     cd "$INSTALL_DIR"
     
     # 构建并启动
     print_info "构建 Docker 镜像..."
-    sudo docker-compose up -d --build
+    docker-compose up -d --build
     
     print_success "Docker 部署完成！"
     
 elif [[ "$DEPLOY_METHOD" == "2" ]]; then
-    # 二进制部署
-    print_info "选择: 二进制部署"
+    # 源码编译部署
+    print_info "选择: 源码编译部署"
     
-    # 下载预编译文件
-    print_info "下载预编译文件..."
-    RELEASE_URL="https://github.com/${GITHUB_USER}/${GITHUB_REPO}/releases/latest/download/frp-panel-${OS}-${ARCH}"
+    # 检查依赖
+    if ! command_exists git; then
+        print_error "未检测到 git，正在安装..."
+        if [[ "$OS" == "linux" ]]; then
+            apt-get update && apt-get install -y git || yum install -y git
+        fi
+    fi
     
-    sudo mkdir -p "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
+    if ! command_exists go; then
+        print_error "未检测到 Go，请先安装 Go 1.24+"
+        print_info "访问: https://golang.org/dl/"
+        exit 1
+    fi
     
-    sudo curl -L -o frp-panel "$RELEASE_URL"
-    sudo chmod +x frp-panel
+    # 下载项目
+    print_info "下载项目..."
+    mkdir -p "$TEMP_DIR"
+    cd "$TEMP_DIR"
+    git clone --depth 1 -b "$GITHUB_BRANCH" "https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git"
+    cd "$GITHUB_REPO"
+    
+    # 构建后端
+    print_info "构建后端..."
+    ./build.sh --platform "$OS" --arch "$ARCH" --bintype full --skip-frontend
     
     # 询问配置
     read -p "是否开放用户注册? [y/N]: " ENABLE_REGISTER
@@ -140,15 +135,21 @@ elif [[ "$DEPLOY_METHOD" == "2" ]]; then
     read -p "Web 端口 (默认 9000): " WEB_PORT
     WEB_PORT=${WEB_PORT:-9000}
     
+    # 安装
+    print_info "安装到 $INSTALL_DIR..."
+    mkdir -p "$INSTALL_DIR"
+    cp "dist/frp-panel-${OS}-${ARCH}" "$INSTALL_DIR/frp-panel"
+    chmod +x "$INSTALL_DIR/frp-panel"
+    
     # 创建配置文件
-    sudo tee .env > /dev/null <<EOF
+    cat > "$INSTALL_DIR/.env" <<EOF
 APP_ENABLE_REGISTER=$REGISTER_FLAG
 APP_PORT=$WEB_PORT
 DB_DSN=./data/data.db?_pragma=journal_mode(WAL)
 EOF
     
     # 创建 systemd 服务
-    sudo tee /etc/systemd/system/frp-panel.service > /dev/null <<EOF
+    cat > /etc/systemd/system/frp-panel.service <<EOF
 [Unit]
 Description=FRP Panel Azure
 After=network.target
@@ -166,11 +167,11 @@ WantedBy=multi-user.target
 EOF
     
     # 启动服务
-    sudo systemctl daemon-reload
-    sudo systemctl enable frp-panel
-    sudo systemctl start frp-panel
+    systemctl daemon-reload
+    systemctl enable frp-panel
+    systemctl start frp-panel
     
-    print_success "二进制部署完成！"
+    print_success "源码编译部署完成！"
 fi
 
 # 显示结果
@@ -185,15 +186,17 @@ print_info "数据目录: $INSTALL_DIR/data"
 echo ""
 print_info "管理命令:"
 if [[ "$DEPLOY_METHOD" == "1" ]]; then
-    echo "  启动: cd $INSTALL_DIR && sudo docker-compose up -d"
-    echo "  停止: cd $INSTALL_DIR && sudo docker-compose down"
-    echo "  日志: cd $INSTALL_DIR && sudo docker-compose logs -f"
+    echo "  启动: cd $INSTALL_DIR && docker-compose up -d"
+    echo "  停止: cd $INSTALL_DIR && docker-compose down"
+    echo "  日志: cd $INSTALL_DIR && docker-compose logs -f"
+    echo "  重启: cd $INSTALL_DIR && docker-compose restart"
 else
-    echo "  启动: sudo systemctl start frp-panel"
-    echo "  停止: sudo systemctl stop frp-panel"
-    echo "  重启: sudo systemctl restart frp-panel"
-    echo "  状态: sudo systemctl status frp-panel"
-    echo "  日志: sudo journalctl -u frp-panel -f"
+    echo "  启动: systemctl start frp-panel"
+    echo "  停止: systemctl stop frp-panel"
+    echo "  重启: systemctl restart frp-panel"
+    echo "  状态: systemctl status frp-panel"
+    echo "  日志: journalctl -u frp-panel -f"
 fi
 echo ""
 print_warning "提示: 第一个注册的用户将成为管理员"
+print_info "项目地址: https://github.com/${GITHUB_USER}/${GITHUB_REPO}"
